@@ -1,0 +1,50 @@
+.scanner-camera {
+  position: relative;
+}
+
+.scanner-placeholder {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: .7rem;
+  color: #555;
+  font-size: .75rem;
+}
+
+.scanner-reader {
+  width: 100%;
+  min-height: 0;
+}
+
+.scanner-camera.on .scanner-reader {
+  min-height: 300px;
+}
+
+.scanner-reader video {
+  border-radius: 1rem;
+}
+
+.scanner-camera-select {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: .8rem;
+  margin: -.25rem 0 1rem;
+  color: #777;
+  font-size: .68rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: .1em;
+}
+
+.scanner-camera-select select {
+  margin: 0;
+  color: white;
+  background: #171719;
+  border: 1px solid #333338;
+  border-radius: .7rem;
+  padding: .65rem;
+}

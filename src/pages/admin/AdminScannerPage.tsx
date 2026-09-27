@@ -1,0 +1,1 @@
+import React from 'react';import { PageHeading } from '../../components/PortalUI';import QRVerifyPanel from '../../components/admin/QRVerifyPanel';export default function AdminScannerPage(){return <div><PageHeading eyebrow="Reception" title="QR scanner" copy="Verify identity, show access status and record active check-ins."/><QRVerifyPanel/></div>}
