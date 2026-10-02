@@ -1,11 +1,12 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { ArrowLeft, ArrowRight, Camera, Check, Loader2, ShieldCheck, Upload } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Camera, Check, Loader2, ShieldCheck } from 'lucide-react';
 import CameraCapture from '../components/CameraCapture';
 import SimpleHeader from '../components/SimpleHeader';
 import { MEMBERSHIP_PLANS, PLAN_ORDER, formatNaira, type PlanKey } from '../lib/config';
 import { registerMember } from '../lib/membershipApi';
 import { useAuth } from '../lib/AuthContext';
+import { ensureCompressedProfilePhoto, formatPhotoSize } from '../lib/profilePhoto';
 
 const steps = ['Account', 'Photo', 'Plan', 'Confirm'];
 const emailRe = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -14,7 +15,6 @@ export default function RegisterPage() {
   const [params] = useSearchParams();
   const nav = useNavigate();
   const auth = useAuth();
-  const uploadRef = useRef<HTMLInputElement>(null);
   const initial = PLAN_ORDER.includes(params.get('plan') as PlanKey) ? params.get('plan') as PlanKey : '3_months';
   const [step, setStep] = useState(0);
   const [form, setForm] = useState({ fullName: '', email: '', phone: '', password: '', plan: initial });
@@ -23,6 +23,8 @@ export default function RegisterPage() {
   const [cameraOpen, setCameraOpen] = useState(false);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [photoBusy, setPhotoBusy] = useState(false);
+  const [photoStatus, setPhotoStatus] = useState('');
 
   useEffect(() => () => {
     if (preview?.startsWith('blob:')) URL.revokeObjectURL(preview);
@@ -36,7 +38,8 @@ export default function RegisterPage() {
       if (form.phone.replace(/\D/g, '').length < 7) return setError('Enter a valid phone number.');
       if (form.password.length < 8) return setError('Use at least 8 characters for your password.');
     }
-    if (step === 1 && !photo) return setError('Take or upload a clear front-facing photo for staff verification.');
+    if (step === 1 && photoBusy) return setError('Please wait while your photo is being prepared.');
+    if (step === 1 && !photo) return setError('Open the camera and capture a clear live photo for staff verification.');
     setStep((current) => Math.min(3, current + 1));
   }
 
@@ -58,12 +61,22 @@ export default function RegisterPage() {
     }
   }
 
-  function choose(file: File) {
-    if (!file.type.startsWith('image/')) return setError('Please choose an image file.');
-    if (file.size > 5_000_000) return setError('Please choose an image smaller than 5 MB.');
-    setPhoto(file);
-    setPreview(URL.createObjectURL(file));
+  async function chooseCapturedPhoto(file: File) {
     setError('');
+    setPhotoStatus('');
+    setPhotoBusy(true);
+    try {
+      const prepared = await ensureCompressedProfilePhoto(file);
+      setPhoto(prepared);
+      setPreview(URL.createObjectURL(prepared));
+      setPhotoStatus(`Live photo ready · ${formatPhotoSize(prepared.size)}`);
+    } catch (photoError) {
+      setPhoto(null);
+      setPreview(null);
+      setError(photoError instanceof Error ? photoError.message : 'That photo could not be processed.');
+    } finally {
+      setPhotoBusy(false);
+    }
   }
 
   return (
@@ -90,15 +103,15 @@ export default function RegisterPage() {
           </div>}
 
           {step === 1 && <div>
-            <div className="section-heading"><p className="eyebrow">Step 2 of 4</p><h2>Verification photo</h2><p>Use a clear, front-facing photo. Staff will see it when your QR is scanned.</p></div>
+            <div className="section-heading"><p className="eyebrow">Step 2 of 4</p><h2>Live verification photo</h2><p>Open your front camera or webcam and take a clear photo now. Gallery uploads are not accepted.</p></div>
             <div className={`photo-drop ${preview ? 'has-photo' : ''}`}>
-              {preview ? <img src={preview} alt="Profile preview" /> : <><Camera size={38} /><strong>Add your verification photo</strong><span>Take a new photo or upload an existing one</span></>}
+              {preview ? <img src={preview} alt="Captured profile preview" /> : <><Camera size={38} /><strong>Take your verification photo</strong><span>A live camera photo is required for staff identity checks</span></>}
               <div className="photo-choice-actions">
-                <button type="button" className="btn-primary" onClick={() => setCameraOpen(true)}><Camera size={17} />{preview ? 'Retake photo' : 'Use camera'}</button>
-                <button type="button" className="btn-secondary" onClick={() => uploadRef.current?.click()}><Upload size={17} />{preview ? 'Upload another' : 'Upload photo'}</button>
+                <button type="button" className="btn-primary" disabled={photoBusy} onClick={() => setCameraOpen(true)}><Camera size={17} />{preview ? 'Retake live photo' : 'Open Camera'}</button>
               </div>
-              <input ref={uploadRef} type="file" accept="image/jpeg,image/png,image/webp" hidden onChange={(event) => event.target.files?.[0] && choose(event.target.files[0])} />
-              <small>JPG, PNG or WebP · Maximum 5 MB</small>
+              <small>Captured live · Automatically resized and compressed before upload</small>
+              {photoBusy && <div className="photo-processing" role="status"><Loader2 className="animate-spin" size={17} /><span>Preparing captured photo…</span></div>}
+              {!photoBusy && photoStatus && <p className="photo-ready"><Check size={15} />{photoStatus}</p>}
             </div>
           </div>}
 
@@ -120,12 +133,12 @@ export default function RegisterPage() {
           {error && <p className="form-error">{error}</p>}
           <div className="registration-actions">
             {step > 0 ? <button className="btn-secondary" onClick={() => setStep((current) => current - 1)}><ArrowLeft size={17} />Back</button> : <Link className="btn-secondary" to="/"><ArrowLeft size={17} />Home</Link>}
-            <button className="btn-primary" disabled={busy} onClick={step === 3 ? submit : next}>{busy ? <Loader2 className="animate-spin" size={18} /> : step === 3 ? 'Create membership' : <>Continue<ArrowRight size={17} /></>}</button>
+            <button className="btn-primary" disabled={busy || photoBusy || (step === 1 && !photo)} onClick={step === 3 ? submit : next}>{busy || photoBusy ? <Loader2 className="animate-spin" size={18} /> : step === 3 ? 'Create membership' : <>Continue<ArrowRight size={17} /></>}</button>
           </div>
         </section>
         <p className="auth-switch">Already registered? <Link to="/login">Member login</Link></p>
       </main>
-      <CameraCapture open={cameraOpen} onClose={() => setCameraOpen(false)} onCapture={choose} />
+      <CameraCapture open={cameraOpen} onClose={() => setCameraOpen(false)} onCapture={(file) => void chooseCapturedPhoto(file)} />
     </div>
   );
 }

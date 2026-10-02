@@ -3,6 +3,7 @@ import { demoAdminAction, demoPhotoRequest, demoRegister, demoRequestRenewal, de
 import type { AdminMember, CheckIn, MemberOverview, Membership, PhotoChangeRequest, Profile, ScanResult } from './types';
 import type { PlanKey } from './config';
 import { getPendingPhoto, removePendingPhoto, savePendingPhoto } from './pendingRegistration';
+import { ensureCompressedProfilePhoto } from './profilePhoto';
 
 async function signedPhoto(path?: string | null) { if (!path) return null; const { data } = await supabase.storage.from('member-photos').createSignedUrl(path, 3600); return data?.signedUrl ?? null; }
 function currentDateKey(){const d=new Date();return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`}
@@ -11,7 +12,7 @@ export async function registerMember(input: { fullName: string; email: string; p
   if (!isSupabaseConfigured) return demoRegister({ ...input, photoUrl: input.preview });
   const { data: existing } = await supabase.auth.getSession();
   if (existing.session) await supabase.auth.signOut({ scope: 'local' });
-  if (input.photo) await savePendingPhoto(input.email, input.photo);
+  if (input.photo) await savePendingPhoto(input.email, await ensureCompressedProfilePhoto(input.photo));
   const { data, error } = await supabase.auth.signUp({ email: input.email, password: input.password, options: { data: { full_name: input.fullName, phone: input.phone, membership_plan: input.plan, account_type: 'pfitness_member' } } });
   if (error || !data.user) throw new Error(error?.message ?? 'Could not create account.');
   if (data.session) await completePendingRegistrationPhoto(input.email, data.user.id);
@@ -24,9 +25,10 @@ export async function completePendingRegistrationPhoto(email: string, userId?: s
   if (!photo) return;
   const id = userId ?? (await supabase.auth.getUser()).data.user?.id;
   if (!id) return;
-  const extension = photo.name.split('.').pop() ?? 'jpg';
+  const compressedPhoto = await ensureCompressedProfilePhoto(photo);
+  const extension = compressedPhoto.type === 'image/webp' ? 'webp' : 'jpg';
   const photoPath = `${id}/verified-${crypto.randomUUID()}.${extension}`;
-  const upload = await supabase.storage.from('member-photos').upload(photoPath, photo);
+  const upload = await supabase.storage.from('member-photos').upload(photoPath, compressedPhoto, { contentType: compressedPhoto.type, upsert: false });
   if (upload.error) throw new Error('Your account is ready, but the photo upload failed. Please try again from your profile.');
   const { error } = await supabase.rpc('member_set_initial_photo', { p_photo_path: photoPath });
   if (error) throw new Error(error.message);
@@ -47,7 +49,7 @@ export async function getMemberOverview(userId: string): Promise<MemberOverview>
   return { profile: p, currentMembership, history: rows.filter(m => m.id !== currentMembership?.id), photoRequest: ((requests ?? [])[0] ?? null) as PhotoChangeRequest | null, checkIns: (checkIns ?? []) as CheckIn[] };
 }
 export async function requestRenewal(profileId: string, plan: PlanKey) { if (!isSupabaseConfigured) return demoRequestRenewal(profileId, plan); const { error } = await supabase.rpc('member_request_renewal', { p_plan_key: plan }); if (error) throw error; }
-export async function requestPhoto(profileId: string, file: File, preview: string) { if (!isSupabaseConfigured) return demoPhotoRequest(profileId, preview); const path = `${profileId}/requests/${crypto.randomUUID()}.${file.name.split('.').pop() ?? 'jpg'}`; const upload = await supabase.storage.from('member-photos').upload(path, file); if (upload.error) throw upload.error; const { error } = await supabase.from('photo_change_requests').insert({ profile_id: profileId, requested_photo_path: path }); if (error) throw error; }
+export async function requestPhoto(profileId: string, file: File, preview: string) { if (!isSupabaseConfigured) return demoPhotoRequest(profileId, preview); const compressedPhoto = await ensureCompressedProfilePhoto(file); const extension = compressedPhoto.type === 'image/webp' ? 'webp' : 'jpg'; const path = `${profileId}/requests/${crypto.randomUUID()}.${extension}`; const upload = await supabase.storage.from('member-photos').upload(path, compressedPhoto, { contentType: compressedPhoto.type, upsert: false }); if (upload.error) throw upload.error; const { error } = await supabase.from('photo_change_requests').insert({ profile_id: profileId, requested_photo_path: path }); if (error) throw error; }
 export async function updateProfile(profileId: string, input: { full_name: string; phone: string }) { if (!isSupabaseConfigured) return demoUpdateProfile(profileId,input); const { error } = await supabase.from('profiles').update(input).eq('id', profileId); if (error) throw error; }
 export async function updatePassword(password: string) { if (password.length < 8) throw new Error('Use at least 8 characters.'); if (!isSupabaseConfigured) return; const { error } = await supabase.auth.updateUser({ password }); if (error) throw error; }
 export async function getAdminMembers(): Promise<AdminMember[]> {
